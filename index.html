@@ -217,7 +217,11 @@ async function load(){
   }catch(e){state.entries=[];}
   if(repo&&Array.isArray(repo.entries)){
     const repoIds=new Set(repo.entries.map(e=>e.id));
-    repo.entries.forEach(re=>{if(!repoIds.has(re.id)&&!state.entries.some(x=>x.id===re.id)){state.entries.push(re);}});
+    repo.entries.forEach(re=>{
+      const li=state.entries.findIndex(x=>x.id===re.id);
+      if(li>=0){state.entries[li]=re;} /* 同 id：以仓库最新为准，修复旧缓存 */
+      else state.entries.push(re);
+    });
     if(Array.isArray(repo.categories)&&repo.categories.length)repo.categories.forEach(c=>{if(!state.categories.includes(c))state.categories.push(c);});
     /* 打开页面时：若本地有仓库里没有的条目且已设 Token，自动补推同步 */
     if(syncToken()&&state.entries.some(e=>!repoIds.has(e.id)))scheduleSync();
@@ -298,9 +302,12 @@ async function syncTick(){
     if(resp.ok){
       const repo=await resp.json();
       if(repo&&Array.isArray(repo.entries)){
-        const ids=new Set(state.entries.map(e=>e.id));
         let changed=false;
-        repo.entries.forEach(re=>{if(!ids.has(re.id)){state.entries.push(re);ids.add(re.id);changed=true;}});
+        repo.entries.forEach(re=>{
+          const li=state.entries.findIndex(x=>x.id===re.id);
+          if(li>=0){state.entries[li]=re;changed=true;}
+          else{state.entries.push(re);changed=true;}
+        });
         if(changed){save();renderAll();toast('已拉取其他设备的新内容');}
       }
     }
