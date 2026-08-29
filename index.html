@@ -131,6 +131,8 @@ input:focus,select:focus,textarea:focus{border-color:var(--brand);box-shadow:0 0
     <button id="btnImport">导入 JSON</button>
     <input type="file" id="importFile" accept=".json" style="display:none">
     <div class="themeRow"><span>黑夜模式</span><div class="theme-switch" id="themeSwitch"></div></div>
+    <div class="themeRow"><span id="syncStatus">未同步</span><button id="btnSync" class="small">立即同步</button></div>
+    <button id="btnSetToken" class="small">🔑 设置同步 Token</button>
   </div>
 </aside>
 
@@ -181,6 +183,10 @@ input:focus,select:focus,textarea:focus{border-color:var(--brand);box-shadow:0 0
 <script>
 const STORE_KEY='promptlib_v1';
 const DEF_CATS=['通用提示词','特定场景','剧本分镜','剧本','参考库'];
+/* ===== GitHub 自动同步配置（Token 各设备本地输入，不写入代码） ===== */
+const SYNC={owner:'sanshengjuelian',repo:'prompt-lib',branch:'main'};
+function syncToken(){return localStorage.getItem('promptlib_token')||'';}
+function setSyncToken(t){localStorage.setItem('promptlib_token',t);}
 let state={entries:[],categories:[...DEF_CATS],activeCat:'',activeTag:'',search:'',editingId:null};
 
 const SEED=[
@@ -218,6 +224,56 @@ async function load(){
   else DEF_CATS.forEach(c=>{if(!state.categories.includes(c))state.categories.push(c);});
 }
 function uid(){return Date.now()+Math.floor(Math.random()*1000);}
+
+/* ===== GitHub 自动同步 ===== */
+let syncTimer=null;
+function setSyncStatus(t){const el=document.getElementById('syncStatus');if(el)el.textContent=t;}
+function scheduleSync(){clearTimeout(syncTimer);syncTimer=setTimeout(syncNow,1500);setSyncStatus('⏳ 待同步…');}
+async function ghGetSha(path){
+  try{
+    const r=await fetch('https://api.github.com/repos/'+SYNC.owner+'/'+SYNC.repo+'/contents/'+path+'?ref='+SYNC.branch,{headers:{Authorization:'Bearer '+syncToken(),Accept:'application/vnd.github+json'}});
+    if(r.ok){const j=await r.json();return j.sha;}return null;
+  }catch(e){return null;}
+}
+async function ghPut(path,contentB64,msg){
+  const sha=await ghGetSha(path);
+  const body={message:msg,content:contentB64,branch:SYNC.branch};
+  if(sha)body.sha=sha;
+  const r=await fetch('https://api.github.com/repos/'+SYNC.owner+'/'+SYNC.repo+'/contents/'+path,{
+    method:'PUT',
+    headers:{Authorization:'Bearer '+syncToken(),Accept:'application/vnd.github+json','Content-Type':'application/json'},
+    body:JSON.stringify(body)});
+  if(!r.ok){const t=await r.text();throw new Error(path+' '+r.status+' '+t.slice(0,100));}
+}
+function b64utf8(s){return btoa(unescape(encodeURIComponent(s)));}
+function b64buf(buf){let s='';const b=new Uint8Array(buf);const CH=0x8000;for(let i=0;i<b.length;i+=CH){s+=String.fromCharCode.apply(null,b.subarray(i,i+CH));}return btoa(s);}
+async function syncNow(){
+  if(!syncToken()){setSyncStatus('未设置 Token');toast('请先设置同步 Token');return;}
+  setSyncStatus('⏳ 同步中…');
+  try{
+    const tasks=[];
+    for(const e of state.entries){
+      let idx=0;
+      for(const m of (e.media||[])){
+        if(m.kind==='link')continue;
+        idx++;
+        if(m.path)continue;
+        const rec=await getMedia(m.id);if(!rec||!rec.blob)continue;
+        const ext=((rec.mime||'bin').split('/')[1])||'bin';
+        const fn='e'+e.id+'_'+idx+'.'+ext;
+        const buf=await rec.blob.arrayBuffer();
+        const path='data/media/'+fn;
+        tasks.push(ghPut(path,b64buf(buf),'sync '+fn).then(()=>{m.path=path;m.name=m.name||rec.name;delete m.id;}));
+      }
+    }
+    const payload={entries:state.entries,categories:state.categories};
+    tasks.push(ghPut('data/entries.json',b64utf8(JSON.stringify(payload,null,1)),'sync entries'));
+    await Promise.all(tasks);
+    save();
+    setSyncStatus('✓ 已同步 '+new Date().toLocaleTimeString());
+    toast('已同步到线上');
+  }catch(err){console.error(err);setSyncStatus('✗ 同步失败');toast('同步失败：'+err.message.slice(0,60));}
+}
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function embedUrl(url,autoplay){
   const bv=url.match(/BV[0-9A-Za-z]{10}/);if(bv)return 'https://player.bilibili.com/player.html?bvid='+bv[0]+'&page=1'+(autoplay?'&autoplay=1':'');
@@ -450,7 +506,7 @@ function saveEditor(){
     date:new Date().toISOString().slice(0,10)};
   if(state.editingId){Object.assign(state.entries.find(x=>x.id===state.editingId),obj);}
   else state.entries.push({id:uid(),...obj});
-  save();renderAll();closeEditor();toast('已保存');
+  save();renderAll();closeEditor();toast('已保存');scheduleSync();
 }
 function closeEditor(){document.getElementById('editorMask').classList.remove('show');state.editingId=null;editingMedia=[];}
 async function delEntry(){
@@ -458,7 +514,7 @@ async function delEntry(){
   const e=state.entries.find(x=>x.id===state.editingId);
   if(e&&e.media){for(const m of e.media){if(m.kind!=='link'&&m.id)await delMedia(m.id);}}
   state.entries=state.entries.filter(x=>x.id!==state.editingId);
-  save();renderAll();closeEditor();toast('已删除');
+  save();renderAll();closeEditor();toast('已删除');scheduleSync();
 }
 
 function addCat(){const n=prompt('新分类名称：');if(n&&n.trim()&&!state.categories.includes(n.trim())){state.categories.push(n.trim());save();renderCats();}}
@@ -553,6 +609,13 @@ document.getElementById('btnImport').onclick=()=>document.getElementById('import
 document.getElementById('importFile').onchange=e=>{if(e.target.files[0])importJSON(e.target.files[0]);e.target.value='';};
 document.getElementById('btnAddCat').onclick=addCat;
 document.getElementById('themeSwitch').onclick=toggleTheme;
+document.getElementById('btnSync').onclick=syncNow;
+document.getElementById('btnSetToken').onclick=()=>{
+  const cur=syncToken();
+  const t=prompt('输入 GitHub Token（各设备各自保存一次）：',cur?'（已设置，留空保持不变）':'');
+  if(t===null)return;
+  if(t.trim()&&!t.startsWith('（')){setSyncToken(t.trim());toast('Token 已保存');}
+};
 document.querySelectorAll('.modal-mask').forEach(m=>m.addEventListener('click',ev=>{if(ev.target===m)m.classList.remove('show');}));
 document.addEventListener('keydown',e=>{if(e.key==='Escape')document.querySelectorAll('.modal-mask.show').forEach(m=>m.classList.remove('show'));});
 
