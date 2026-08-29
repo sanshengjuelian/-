@@ -133,6 +133,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--brand);box-shadow:0 0
     <div class="themeRow"><span>黑夜模式</span><div class="theme-switch" id="themeSwitch"></div></div>
     <div class="themeRow"><span id="syncStatus">未同步</span><button id="btnSync" class="small">立即同步</button></div>
     <button id="btnSetToken" class="small">🔑 设置同步 Token</button>
+    <button id="btnDiag" class="small">🔍 诊断同步</button>
   </div>
 </aside>
 
@@ -656,6 +657,26 @@ document.getElementById('btnSetToken').onclick=()=>{
   const t=prompt('输入 GitHub Token（各设备各自保存一次）：',cur?'（已设置，留空保持不变）':'');
   if(t===null)return;
   if(t.trim()&&!t.startsWith('（')){setSyncToken(t.trim());toast('Token 已保存');}
+};
+document.getElementById('btnDiag').onclick=async()=>{
+  const t=syncToken();
+  if(!t){toast('未设置 Token');return;}
+  setSyncStatus('🔍 诊断中…');
+  try{
+    const r=await fetch('https://api.github.com/user',{headers:{Authorization:'Bearer '+t,Accept:'application/vnd.github+json'}});
+    const txt=await r.text();
+    if(r.ok){
+      let login='ok';try{login=JSON.parse(txt).login||'ok';}catch(e){}
+      setSyncStatus('✓ Token 可用：'+login);
+      toast('Token 有效——问题在写入或网络，再点「立即同步」看错误');
+    }else{
+      setSyncStatus('✗ HTTP '+r.status+' '+txt.slice(0,70));
+      toast('HTTP '+r.status);
+    }
+  }catch(e){
+    setSyncStatus('✗ 网络错误：'+e.message);
+    toast('网络/CORS 错误：'+e.message);
+  }
 };
 document.querySelectorAll('.modal-mask').forEach(m=>m.addEventListener('click',ev=>{if(ev.target===m)m.classList.remove('show');}));
 document.addEventListener('keydown',e=>{if(e.key==='Escape')document.querySelectorAll('.modal-mask.show').forEach(m=>m.classList.remove('show'));});
