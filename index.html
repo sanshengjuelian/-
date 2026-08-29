@@ -229,10 +229,13 @@ async function load(){
 }
 function uid(){return Date.now()+Math.floor(Math.random()*1000);}
 
-/* ===== GitHub 自动同步 ===== */
+/* ===== GitHub 自动同步（每 2 秒轮询：拉取合并 + 有改动才推送） ===== */
 let syncTimer=null;
-function setSyncStatus(t){const el=document.getElementById('syncStatus');if(el)el.textContent=t;}
-function scheduleSync(){clearTimeout(syncTimer);syncTimer=setTimeout(syncNow,1500);setSyncStatus('⏳ 待同步…');}
+let dirty=false;
+let syncing=false;
+let lastSyncText='';
+function setSyncStatus(t){lastSyncText=t;const el=document.getElementById('syncStatus');if(el)el.textContent=t;}
+function scheduleSync(){dirty=true;clearTimeout(syncTimer);syncTimer=setTimeout(syncNow,1500);setSyncStatus('⏳ 待同步…');}
 async function ghGetSha(path){
   try{
     const r=await fetch('https://api.github.com/repos/'+SYNC.owner+'/'+SYNC.repo+'/contents/'+path+'?ref='+SYNC.branch,{headers:{Authorization:'Bearer '+syncToken(),Accept:'application/vnd.github+json'}});
@@ -240,19 +243,27 @@ async function ghGetSha(path){
   }catch(e){return null;}
 }
 async function ghPut(path,contentB64,msg){
-  const sha=await ghGetSha(path);
-  const body={message:msg,content:contentB64,branch:SYNC.branch};
-  if(sha)body.sha=sha;
-  const r=await fetch('https://api.github.com/repos/'+SYNC.owner+'/'+SYNC.repo+'/contents/'+path,{
-    method:'PUT',
-    headers:{Authorization:'Bearer '+syncToken(),Accept:'application/vnd.github+json','Content-Type':'application/json'},
-    body:JSON.stringify(body)});
-  if(!r.ok){const t=await r.text();throw new Error(path+' '+r.status+' '+t.slice(0,100));}
+  let sha=await ghGetSha(path);
+  for(let attempt=0;attempt<2;attempt++){
+    const body={message:msg,content:contentB64,branch:SYNC.branch};
+    if(sha)body.sha=sha;
+    const r=await fetch('https://api.github.com/repos/'+SYNC.owner+'/'+SYNC.repo+'/contents/'+path,{
+      method:'PUT',
+      headers:{Authorization:'Bearer '+syncToken(),Accept:'application/vnd.github+json','Content-Type':'application/json'},
+      body:JSON.stringify(body)});
+    if(r.ok)return;
+    const t=await r.text();
+    if(r.status===409||r.status===422){sha=await ghGetSha(path);continue;}
+    throw new Error(path+' '+r.status+' '+t.slice(0,100));
+  }
+  throw new Error(path+' 冲突');
 }
 function b64utf8(s){return btoa(unescape(encodeURIComponent(s)));}
 function b64buf(buf){let s='';const b=new Uint8Array(buf);const CH=0x8000;for(let i=0;i<b.length;i+=CH){s+=String.fromCharCode.apply(null,b.subarray(i,i+CH));}return btoa(s);}
 async function syncNow(){
-  if(!syncToken()){setSyncStatus('未设置 Token');toast('请先设置同步 Token');return;}
+  if(syncing)return;
+  if(!syncToken()){setSyncStatus('🔑 未设 Token');return;}
+  syncing=true;
   setSyncStatus('⏳ 同步中…');
   try{
     const tasks=[];
@@ -273,11 +284,30 @@ async function syncNow(){
     const payload={entries:state.entries,categories:state.categories};
     tasks.push(ghPut('data/entries.json',b64utf8(JSON.stringify(payload,null,1)),'sync entries'));
     await Promise.all(tasks);
+    dirty=false;
     save();
-    setSyncStatus('✓ 已同步 '+new Date().toLocaleTimeString());
-    toast('已同步到线上');
-  }catch(err){console.error(err);setSyncStatus('✗ 同步失败');toast('同步失败：'+err.message.slice(0,60));}
+    setSyncStatus('✓ 已同步');
+  }catch(err){console.error(err);setSyncStatus('✗ 同步失败，稍后重试');}
+  syncing=false;
 }
+/* 每 2 秒：拉取仓库最新数据合并 + 有本地改动则推送 */
+async function syncTick(){
+  if(syncing)return;
+  try{
+    const resp=await fetch('data/entries.json',{cache:'no-store'});
+    if(resp.ok){
+      const repo=await resp.json();
+      if(repo&&Array.isArray(repo.entries)){
+        const ids=new Set(state.entries.map(e=>e.id));
+        let changed=false;
+        repo.entries.forEach(re=>{if(!ids.has(re.id)){state.entries.push(re);ids.add(re.id);changed=true;}});
+        if(changed){save();renderAll();toast('已拉取其他设备的新内容');}
+      }
+    }
+  }catch(e){}
+  if(dirty&&syncToken())await syncNow();
+}
+setInterval(syncTick,2000);
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function embedUrl(url,autoplay){
   const bv=url.match(/BV[0-9A-Za-z]{10}/);if(bv)return 'https://player.bilibili.com/player.html?bvid='+bv[0]+'&page=1'+(autoplay?'&autoplay=1':'');
