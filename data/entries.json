@@ -231,8 +231,8 @@
    "media": [
     {
      "kind": "image",
-     "name": "云海天宫_巨构风格.png",
-     "path": "data/media/e1787968656264_1.png"
+     "id": "m178796891836484245",
+     "name": "云海天宫_池面仙境.png"
     }
    ],
    "prompt": "测试",
