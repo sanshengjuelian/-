@@ -216,9 +216,11 @@ async function load(){
     else{state.entries=[];state.categories=[...DEF_CATS];}
   }catch(e){state.entries=[];}
   if(repo&&Array.isArray(repo.entries)){
-    const ids=new Set(state.entries.map(e=>e.id));
-    repo.entries.forEach(re=>{if(!ids.has(re.id)){state.entries.push(re);ids.add(re.id);}});
+    const repoIds=new Set(repo.entries.map(e=>e.id));
+    repo.entries.forEach(re=>{if(!repoIds.has(re.id)&&!state.entries.some(x=>x.id===re.id)){state.entries.push(re);}});
     if(Array.isArray(repo.categories)&&repo.categories.length)repo.categories.forEach(c=>{if(!state.categories.includes(c))state.categories.push(c);});
+    /* 打开页面时：若本地有仓库里没有的条目且已设 Token，自动补推同步 */
+    if(syncToken()&&state.entries.some(e=>!repoIds.has(e.id)))scheduleSync();
   }
   state.entries.forEach(e=>{if(!e.media)e.media=[];});
   if(!Array.isArray(state.categories)||!state.categories.length)state.categories=[...DEF_CATS];
