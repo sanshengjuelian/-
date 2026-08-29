@@ -241,27 +241,29 @@ let syncing=false;
 let lastSyncText='';
 function setSyncStatus(t){lastSyncText=t;const el=document.getElementById('syncStatus');if(el)el.textContent=t;}
 function scheduleSync(){dirty=true;clearTimeout(syncTimer);syncTimer=setTimeout(syncNow,1500);setSyncStatus('⏳ 待同步…');}
-async function ghGetSha(path){
+async function ghGetFile(path){
   try{
     const r=await fetch('https://api.github.com/repos/'+SYNC.owner+'/'+SYNC.repo+'/contents/'+path+'?ref='+SYNC.branch,{headers:{Authorization:'Bearer '+syncToken(),Accept:'application/vnd.github+json'}});
-    if(r.ok){const j=await r.json();return j.sha;}return null;
+    if(r.ok){const j=await r.json();return {sha:j.sha,content:j.content};}
+    return null;
   }catch(e){return null;}
 }
 async function ghPut(path,contentB64,msg){
-  let sha=await ghGetSha(path);
-  for(let attempt=0;attempt<2;attempt++){
+  for(let attempt=0;attempt<5;attempt++){
+    const cur=await ghGetFile(path);
+    if(cur&&cur.content===contentB64)return 'skip'; /* 内容相同则跳过，避免无意义冲突提交 */
     const body={message:msg,content:contentB64,branch:SYNC.branch};
-    if(sha)body.sha=sha;
+    if(cur&&cur.sha)body.sha=cur.sha;
     const r=await fetch('https://api.github.com/repos/'+SYNC.owner+'/'+SYNC.repo+'/contents/'+path,{
       method:'PUT',
       headers:{Authorization:'Bearer '+syncToken(),Accept:'application/vnd.github+json','Content-Type':'application/json'},
       body:JSON.stringify(body)});
-    if(r.ok)return;
+    if(r.ok)return 'ok';
     const t=await r.text();
-    if(r.status===409||r.status===422){sha=await ghGetSha(path);continue;}
-    throw new Error(path+' '+r.status+' '+t.slice(0,100));
+    if(r.status===409||r.status===422){await new Promise(res=>setTimeout(res,800*Math.min(attempt+1,4)));continue;}
+    throw new Error(path+' '+r.status+' '+t.slice(0,80));
   }
-  throw new Error(path+' 冲突');
+  throw new Error(path+' 冲突（多次重试仍失败）');
 }
 function b64utf8(s){return btoa(unescape(encodeURIComponent(s)));}
 function b64buf(buf){let s='';const b=new Uint8Array(buf);const CH=0x8000;for(let i=0;i<b.length;i+=CH){s+=String.fromCharCode.apply(null,b.subarray(i,i+CH));}return btoa(s);}
