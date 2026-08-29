@@ -287,7 +287,7 @@ async function syncNow(){
     dirty=false;
     save();
     setSyncStatus('✓ 已同步');
-  }catch(err){console.error(err);setSyncStatus('✗ 同步失败，稍后重试');}
+  }catch(err){console.error(err);setSyncStatus('✗ 失败：'+(err&&err.message?err.message.slice(0,40):'未知错误'));}
   syncing=false;
 }
 /* 每 2 秒：拉取仓库最新数据合并 + 有本地改动则推送 */
