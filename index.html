@@ -207,21 +207,23 @@ async function mediaUrl(m){if(m.path)return m.path;if(m.kind!=='image'&&m.kind!=
 
 function save(){localStorage.setItem(STORE_KEY,JSON.stringify(state));}
 async function load(){
+  /* 每次打开都拉取仓库最新数据，合并进本地（保证全设备一致） */
+  let repo=null;
+  try{const resp=await fetch('data/entries.json',{cache:'no-store'});if(resp.ok)repo=await resp.json();}catch(e){}
   try{
     const raw=localStorage.getItem(STORE_KEY);
     if(raw){state=JSON.parse(raw);}
-    else{
-      /* 首次访问：优先从仓库 data/entries.json 取数据（全设备共享） */
-      let repo=null;
-      try{const resp=await fetch('data/entries.json',{cache:'no-store'});if(resp.ok)repo=await resp.json();}catch(e){}
-      state.entries=(repo&&repo.entries)?repo.entries:(repo&&Array.isArray(repo)?repo:SEED);
-      if(repo&&Array.isArray(repo.categories)&&repo.categories.length)state.categories=repo.categories;
-      save();
-    }
-  }catch(e){state.entries=SEED;}
+    else{state.entries=[];state.categories=[...DEF_CATS];}
+  }catch(e){state.entries=[];}
+  if(repo&&Array.isArray(repo.entries)){
+    const ids=new Set(state.entries.map(e=>e.id));
+    repo.entries.forEach(re=>{if(!ids.has(re.id)){state.entries.push(re);ids.add(re.id);}});
+    if(Array.isArray(repo.categories)&&repo.categories.length)repo.categories.forEach(c=>{if(!state.categories.includes(c))state.categories.push(c);});
+  }
   state.entries.forEach(e=>{if(!e.media)e.media=[];});
   if(!Array.isArray(state.categories)||!state.categories.length)state.categories=[...DEF_CATS];
   else DEF_CATS.forEach(c=>{if(!state.categories.includes(c))state.categories.push(c);});
+  save();
 }
 function uid(){return Date.now()+Math.floor(Math.random()*1000);}
 
