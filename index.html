@@ -197,12 +197,22 @@ async function putMedia(blob,name,mime){const db=await openDB();const id='m'+Dat
 async function getMedia(id){const db=await openDB();return new Promise((res,rej)=>{const tx=db.transaction('files','readonly');const rq=tx.objectStore('files').get(id);rq.onsuccess=()=>res(rq.result||null);rq.onerror=()=>rej(rq.error);});}
 async function delMedia(id){try{const db=await openDB();await new Promise((res,rej)=>{const tx=db.transaction('files','readwrite');tx.objectStore('files').delete(id);tx.oncomplete=res;tx.onerror=()=>rej(tx.error);});}catch(e){}}
 const objUrls=new Map();
-async function mediaUrl(m){if(m.kind!=='image'&&m.kind!=='video')return null;if(objUrls.has(m.id))return objUrls.get(m.id);const rec=await getMedia(m.id);if(!rec)return null;const u=URL.createObjectURL(rec.blob);objUrls.set(m.id,u);return u;}
+async function mediaUrl(m){if(m.path)return m.path;if(m.kind!=='image'&&m.kind!=='video')return null;if(objUrls.has(m.id))return objUrls.get(m.id);const rec=await getMedia(m.id);if(!rec)return null;const u=URL.createObjectURL(rec.blob);objUrls.set(m.id,u);return u;}
 
 function save(){localStorage.setItem(STORE_KEY,JSON.stringify(state));}
-function load(){
-  try{const raw=localStorage.getItem(STORE_KEY);if(raw){state=JSON.parse(raw);}else{state.entries=SEED;save();}}
-  catch(e){state.entries=SEED;}
+async function load(){
+  try{
+    const raw=localStorage.getItem(STORE_KEY);
+    if(raw){state=JSON.parse(raw);}
+    else{
+      /* 首次访问：优先从仓库 data/entries.json 取数据（全设备共享） */
+      let repo=null;
+      try{const resp=await fetch('data/entries.json',{cache:'no-store'});if(resp.ok)repo=await resp.json();}catch(e){}
+      state.entries=(repo&&repo.entries)?repo.entries:(repo&&Array.isArray(repo)?repo:SEED);
+      if(repo&&Array.isArray(repo.categories)&&repo.categories.length)state.categories=repo.categories;
+      save();
+    }
+  }catch(e){state.entries=SEED;}
   state.entries.forEach(e=>{if(!e.media)e.media=[];});
   if(!Array.isArray(state.categories)||!state.categories.length)state.categories=[...DEF_CATS];
   else DEF_CATS.forEach(c=>{if(!state.categories.includes(c))state.categories.push(c);});
@@ -390,7 +400,7 @@ async function renderEditorMedia(){
   for(const m of editingMedia){
     const it=document.createElement('div');it.className='mediaItem';
     const rm=document.createElement('button');rm.className='mi-rm';rm.textContent='✕';
-    rm.onclick=async()=>{if(m.kind!=='link')await delMedia(m.id);editingMedia=editingMedia.filter(x=>x!==m);renderEditorMedia();};
+    rm.onclick=async()=>{if(m.kind!=='link'&&m.id)await delMedia(m.id);editingMedia=editingMedia.filter(x=>x!==m);renderEditorMedia();};
     it.appendChild(rm);
     if(m.kind==='link'){
       const a=document.createElement('div');a.className='mi-info';a.textContent='🔗 '+vidLabel(m.url);a.style.padding='8px';it.appendChild(a);
@@ -446,7 +456,7 @@ function closeEditor(){document.getElementById('editorMask').classList.remove('s
 async function delEntry(){
   if(!state.editingId)return;
   const e=state.entries.find(x=>x.id===state.editingId);
-  if(e&&e.media){for(const m of e.media){if(m.kind!=='link')await delMedia(m.id);}}
+  if(e&&e.media){for(const m of e.media){if(m.kind!=='link'&&m.id)await delMedia(m.id);}}
   state.entries=state.entries.filter(x=>x.id!==state.editingId);
   save();renderAll();closeEditor();toast('已删除');
 }
@@ -546,7 +556,7 @@ document.getElementById('themeSwitch').onclick=toggleTheme;
 document.querySelectorAll('.modal-mask').forEach(m=>m.addEventListener('click',ev=>{if(ev.target===m)m.classList.remove('show');}));
 document.addEventListener('keydown',e=>{if(e.key==='Escape')document.querySelectorAll('.modal-mask.show').forEach(m=>m.classList.remove('show'));});
 
-load();renderAll();
+load().then(renderAll);
 </script>
 </body>
 </html>
