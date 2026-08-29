@@ -222,6 +222,22 @@
    "prompt": "",
    "script": "",
    "date": "2026-08-27"
+  },
+  {
+   "id": 1787968656264,
+   "title": "测试",
+   "category": "通用提示词",
+   "tags": [],
+   "media": [
+    {
+     "kind": "image",
+     "id": "m17879686545233262",
+     "name": "云海天宫_巨构风格.png"
+    }
+   ],
+   "prompt": "测试",
+   "script": "",
+   "date": "2026-08-29"
   }
  ],
  "categories": [
